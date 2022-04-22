@@ -1,0 +1,253 @@
+---
+title: "Lab 03 - Exploratory Data Analysis"
+output:
+  html_document:
+    html_preview: no
+  pdf_document: default
+link-citations: yes
+---
+
+
+
+```{r setup, message=FALSE, echo=FALSE, warning=FALSE}
+#install.packages(c("data.table","leaflet", "rdrop2"))
+library(data.table)
+library(leaflet)
+library(tidyverse)
+library(rdrop2)
+```
+
+# Learning Goals
+
+- Read in and get familiar with the meteorology dataset  
+- Step through the EDA "checklist" presented in the class slides
+- Practice making exploratory graphs
+
+
+# Lab Description
+
+We will work with the meteorological data presented in lecture. Recall the dataset consists of weather station readings in the continental US. 
+
+**The objective of the lab is to find the weather station with the highest elevation and look at patterns in the time series of its wind speed and temperature.**
+
+# Steps
+
+### 1. Read in the data
+
+First download and then read in with data.table:fread()
+
+```{r checking-file, include=FALSE}
+fn <- "https://raw.githubusercontent.com/JSC370/jsc370-2022/main/labs/lab03/met_all.gz"
+if (!file.exists("met_all.gz"))
+  download.file(fn, destfile = "met_all.gz")
+met <- data.table::fread("met_all.gz")
+```
+
+
+```{r, echo=TRUE, message=FALSE, eval=FALSE}
+download.file(
+  "https://raw.githubusercontent.com/JSC370/jsc370-2022/main/labs/lab03/met_all.gz",
+  destfile = "met_all.gz",
+  method   = "curl",
+  timeout  = 60
+  )
+
+met <- data.table::fread("met_all.gz")
+```
+
+### 2. Check the dimensions, headers, footers. How many columns, rows are there?
+
+```{r}
+dim(met)
+head(met)
+tail(met)
+```
+There are 2,377,343 rows and 30 columns in the met dataset.
+
+### 3. Take a look at the variables.
+
+```{r}
+str(met)
+```
+
+
+### 4. Take a closer look at the key variables. 
+
+```{r}
+table(met$year)
+table(met$day)
+table(met$hour)
+summary(met$temp)
+summary(met$elev)
+summary(met$wind.sp)
+```
+
+It looks like the elevation variable has observations with 9999.0, which is probably an indicator for missing. We should take a deeper look at the data dictionary to confirm. The wind speed variable is ok but there are a lot of missing data.
+
+After checking the data we should make the appropriate modifications. Replace elevations with 9999 as `NA`.
+
+```{r}
+met$elev[met$elev == 9999.0] <- NA
+summary(met$elev)
+met <- met %>% mutate(elev = na_if(elev, 9999))
+```
+At what elevation is the highest weather station?
+
+From the summary table above, we can see that the elevation of the highest weather
+station is 4113 metres.
+
+Below, we will subset the data to include only observations for the weather station(s)
+that are at the maximum elevation of 4113 metres:
+```{r}
+elev <- met[elev == max(elev, na.rm = TRUE)]
+summary(elev)
+```
+
+
+### 5. Check the data against an external data source.
+
+We should check the suspicious temperature value (where is it located?) and validate that the range of elevations make sense (-13 m to 4113 m).
+
+Google is your friend here.
+
+Fix any problems that arise in your checks.
+
+First, we can look at a summary table of the temperature variable:
+```{r}
+summary(met$temp)
+```
+We can see here that there are some stations that somehow recorded temperatures
+of -40C in August in the US, which is not possible under normal conditions. Thus,
+we have decided to create a new data table that only includes observations with 
+temperature values of more than -15C. Then, by calling the summary function 
+again, we can see that the minimum temperature is a more plausible -3C.
+```{r}
+met <- met[temp > -15]
+summary(met$temp)
+```
+Looking also at a histogram describing the distribution of the temperatures,
+we can see that the tails aren't skewed as widely, which is a good sign signaling 
+that we have eliminated any crazy outliers:
+```{r}
+hist(met$temp)
+```
+
+Then, in ascending order of temperature, we have the following first 10 observations:
+```{r}
+
+met2 <- met[order(temp)]
+head(met2)
+```
+In summary, we eliminated the suspicious temperature values below -15C in this section.
+We know that we have done a good job because the distribution of temperatures isn't
+crazily skewed either to the left or the right.
+
+### 6. Calculate summary statistics
+
+Remember to keep the initial question in mind. We want to pick out the weather station with maximum elevation and examine its windspeed and temperature.
+
+Some ideas: select the weather station with maximum elevation; look at the correlation between temperature and wind speed; look at the correlation between temperature and wind speed with hour and day of the month.
+
+Using the elev data table, which we know only contains observations with the 
+highest elevation of 4113 metres, we can use the ggpairs function in the GGally 
+library to generate a matrix of correlations below:
+```{r, echo=FALSE,results='hide',fig.keep='all'}
+met %>%
+  subset(elev == max(elev, na.rm = TRUE)) %>%
+  select(temp, wind.sp, hour, day) %>%
+  GGally::ggpairs() 
+```
+
+We can see from the plots and correlation coefficients above that most of the variables
+are not very strongly correlated, with the pairs of windspeed and day and temperature
+and hour being only moderately correlated with correlation coefficients in the ballpark
+of 0.4.
+
+### 7. Exploratory graphs
+
+
+We should look at the distributions of all of the key variables (elevation, temp, wind speed) to make sure there are no remaining issues with the data.
+
+To do this, we will first draw the histogram for temperature:
+```{r}
+hist(met$temp)
+```
+
+One thing we should consider for later analyses is to log transform wind speed and elevation as the are very skewed. We can do this first for wind speed:
+```{r}
+hist(log(met$wind.sp))
+```
+
+And then we can do it for elevation:
+```{r}
+hist(log(met$elev))
+```
+
+We can see through drawing the histograms for each of these variables' distributions 
+that there don't seem to be any suspiciously high or low observations in any of 
+the variables of elevation, wind speed, or temperature.
+
+Now, using the Leaflet library, we can create an interactive map of the United States
+showing where all the stations that have contributed data are:
+```{r}
+met_stations <- unique(met[,c('lat', 'lon')])
+
+met_stations %>%
+  leaflet() %>%
+  addProviderTiles('OpenStreetMap') %>%
+  addCircles(lat = ~lat, lng = ~lon, opacity = 1, fillOpacity = 1, radius = 100)
+```
+
+Next, we can focus primarily on the weather station with the highest elevation:
+Look at where the weather station with highest elevation is located (i.e. make a map!)
+
+```{r}
+elev %>%
+  leaflet() %>%
+  addProviderTiles('OpenStreetMap') %>%
+  addCircles(lat = ~lat, lng = ~lon, opacity = 1, fillOpacity = 1, radius = 100)
+```
+
+From the map above, we can see that the weather station with the highest elevation
+of 4113 metres is located somewhere in Colorado west of Denver, which isn't surprising
+considering Colorado's geographic proximity to the Rocky Mountains.
+
+Look at the time series of temperature and wind speed at this location. For this we will need to create a date-time variable for the x-axis.
+
+```{r, message=FALSE}
+library(lubridate)
+elev$date <- with(elev, ymd_h(paste(year, month, day, hour, sep = ' ')))
+summary(elev$date)
+```
+
+Then, we can sort the data in the elev data table in order of date and observe the
+first 10 observations:
+```{r}
+elev <- elev[order(date)]
+head(elev)
+```
+
+With the date-time variable we can plot the time series of temperature and wind speed.
+
+```{r}
+plot(elev$date, elev$temp, type = 'l')
+```
+
+We can see above that the time series plot for the association between date and 
+temperature at the weather station located at the highest elevation of 4113 metres 
+does not show a clear correlation, which confirms what we saw in the correlation 
+matrix that we generated in Part 6.
+
+We can draw the same time series plot for the association between date and wind speed:
+```{r}
+plot(elev$date, elev$wind.sp, type = 'l')
+```
+
+We can again see that the time series plot for the association between date and 
+wind speed at the weather station located at the highest elevation of 4113 metres 
+does not show a clear correlation, which again confirms what we saw in the correlation 
+matrix that we generated in Part 6.
+
+# Deliverables
+
+Submit your completed lab to quercus as a html or pdf document. Fill in questions in steps 4,5,6,7
