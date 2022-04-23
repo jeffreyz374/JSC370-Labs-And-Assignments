@@ -120,7 +120,7 @@ stations <- stations[n == 1,][, n := NULL]
 3.  Merge the data as we did during the lecture.
 
 ```{r}
-met <- data.table::fread("met_all.gz")
+met <- data.table::fread("https://raw.githubusercontent.com/jeffreyz374/JSC370-Labs-And-Assignments/main/lab05/met_all.gz")
 met <- merge(x = met, y = stations, 
              all.x = TRUE, all.y = FALSE, by.x = "USAFID", by.y = "USAF")
 ```
