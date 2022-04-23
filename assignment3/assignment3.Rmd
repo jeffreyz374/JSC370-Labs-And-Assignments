@@ -1,0 +1,302 @@
+---
+title: "Shots, Shots, Shots: An Analysis of Studies of COVID-19 Vaccines in the NCBI Database"
+author: "Xiaotang (Jeffrey) Zhou"
+date: "13/03/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(include = TRUE)
+library(httr)
+library(stringr)
+library(xml2)
+library(kableExtra)
+library(dplyr)
+library(readr)
+library(tidytext)
+library(tidyr)
+library(ggplot2)
+```
+
+## APIs
+
+To start, we will find the number of papers containing the term "sars-cov-2 vaccine" in the NCBI database using the code covered in a previous lab:
+
+```{r counter-pubmed, echo = FALSE}
+# Downloading the website
+website <- xml2::read_html("https://pubmed.ncbi.nlm.nih.gov/?term=sars-cov-2+vaccine")
+
+# Finding the counts
+counts <- xml2::xml_find_first(website, "/html/body/main/div[9]/div[2]/div[2]/div[1]/div[1]/span")
+
+# Turning it into text
+counts <- as.character(counts)
+
+# Extracting the data using regex
+stringr::str_extract(counts, "[0-9,]+")
+```
+
+As we can see above, there are currently 18894 papers that come up when we search for "sars-cov-2 vaccine" in the NCBI database. Next, we will extract the first 250 papers and their IDs, followed by their respective titles, journals, publication dates, and abstracts, using regexes.
+
+```{r, echo = FALSE}
+library(httr)
+query_ids <- GET(
+  url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi",
+  query = list(db = "pubmed", term = "sars-cov-2 vaccine", retmax = 1000)
+)
+
+# Extracting the content of the response of GET
+ids <- httr::content(query_ids)
+```
+
+```{r, echo = FALSE}
+# Turn the result into a character vector
+ids <- as.character(ids)
+
+# Find all the ids 
+ids <- unlist(stringr::str_extract_all(ids, "<Id>[1-9]+</Id>"))
+
+# Remove all the leading and trailing <Id> </Id>. Make use of "|"
+ids <- stringr::str_remove_all(ids, "<Id>|</Id>")
+ids <- ids[1:250]
+```
+
+```{r, echo = FALSE}
+publications <- GET(
+  url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi",
+  query = list(db = "pubmed", 
+               id = paste(ids, collapse = ","), 
+               retmax = 1000, 
+               rettype = "abstract")
+)
+
+# Turning the output into character vector
+publications <- httr::content(publications)
+publications_txt <- as.character(publications)
+```
+
+```{r, echo = FALSE}
+pub_char_list <- xml2::xml_children(publications)
+pub_char_list <- sapply(pub_char_list, as.character)
+```
+
+First, we can see below that the expression `!is.na(titles)` evaluates to `TRUE` 249 times but to `FALSE` 1 time, which means that there are 249 papers with titles but for some reason 1 paper without a title.
+
+```{r, echo = FALSE}
+titles <- str_extract(pub_char_list, "<ArticleTitle>(\\n|.)+</ArticleTitle>")
+titles <- str_remove_all(titles, "</?[[:alnum:]]+>")
+titles <- str_replace_all(titles, "\\s+", " ")
+```
+
+```{r}
+table(!is.na(titles))
+```
+
+Thus, we conclude that 249 of the papers we extracted have titles while 1 does not. Next, we can see below that the expression `!is.na(journals)` evaluates to `TRUE` 250 times, which means that there are 250 non-missing journal names.
+
+```{r, echo = FALSE}
+journals <- str_extract(pub_char_list, "</?JournalIssue>(\\n|.)+<ISOAbbreviation>")
+journals <- str_remove_all(journals, "</?[[:alnum:]]+>")
+journals <- str_replace_all(journals, "\\s+", " ")
+```
+
+```{r}
+table(!is.na(journals))
+```
+
+Thus, we conclude that all 250 of the papers we have extracted are associated with some journal. Next, we can see below that the expression `!is.na(abstracts)` evaluates to `TRUE` 216 times but `FALSE` 34 times, which means that 216 of the papers have abstracts while 34 do not.
+
+```{r, echo = FALSE}
+abstracts <- str_extract(pub_char_list, "<Abstract>(\\n|.)+</Abstract>")
+abstracts <- str_remove_all(abstracts, "Label=..[[:alnum:] ]+..") 
+abstracts <- str_remove_all(abstracts, "NlmCategory=..[[:alnum:]]+..")
+abstracts <- str_remove_all(abstracts, "<AbstractText ")
+abstracts <- str_remove_all(abstracts, "</?[[:alnum:]]+>")
+abstracts <- str_remove_all(abstracts, "Copyright (.*)")
+abstracts <- str_remove_all(abstracts, "© (.*)")
+abstracts <- str_replace_all(abstracts, "\\s+", " ")
+```
+
+```{r}
+table(!is.na(abstracts))
+```
+
+Next, we can see below that the expression `!is.na(pub_year)` evaluates to `TRUE` 244 times but `FALSE` 6 times, which means that 244 of the papers have publication years while 6 do not.
+
+```{r, echo = FALSE}
+pub_year <- str_extract(pub_char_list, "<PubDate>(\\n|.)+</PubDate>")
+pub_year <- str_extract(pub_year, "<Year>(\\n|.)+</Year>")
+pub_year <- str_remove_all(pub_year, "</?Year>")
+```
+
+```{r}
+table(!is.na(pub_year))
+```
+
+Next, we can see below that the expression `!is.na(pub_month)` evaluates to `TRUE` 206 times but `FALSE` 44 times, which means that 206 of the papers have publication months while 44 do not.
+
+```{r, echo = FALSE}
+pub_month <- str_extract(pub_char_list, "<PubDate>(\\n|.)+</PubDate>")
+pub_month <- str_extract(pub_month, "<Month>(\\n|.)+</Month>")
+pub_month <- str_remove_all(pub_month, "</?Month>")
+pub_month <- case_when(pub_month == "02" ~ "Feb",
+                       pub_month == "03" ~ "Mar",
+                       pub_month == "04" ~ "Apr",
+                       pub_month == "06" ~ "Jun",
+                       pub_month == "09" ~ "Sep",
+                       pub_month == "12" ~ "Dec",
+                       TRUE ~ pub_month)
+```
+
+```{r}
+table(!is.na(pub_month))
+```
+
+Finally, we can see below that the expression `!is.na(pub_day)` evaluates to `TRUE` 175 times but `FALSE` 75 times, which means that 175 of the papers have publication days while 75 do not.
+
+```{r, echo = FALSE}
+pub_day <- str_extract(pub_char_list, "<PubDate>(\\n|.)+</PubDate>")
+pub_day <- str_extract(pub_day, "<Day>(\\n|.)+</Day>")
+pub_day <- str_remove_all(pub_day, "</?Day>")
+```
+
+```{r}
+table(!is.na(pub_day))
+```
+
+Now that we have all the information we need, we can proceed to constructing the dataset containing each paper's PubMed ID, title, journal to which it was published, publication date (split into year, month, and date to account for missing values in each), and abstract:
+
+```{r, echo = FALSE}
+database <- data.frame(
+  PubMedID = ids,
+  Title = titles,
+  Journal = journals,
+  `Publication Year` = pub_year,
+  `Publication Month` = pub_month,
+  `Publication Day` = pub_day,
+  Abstract = abstracts
+)
+
+database %>%
+  rename("Publication Year" = Publication.Year, "Publication Month" = Publication.Month, "Publication Day" = Publication.Day) %>%
+  kable(caption = "Information about the 250 papers extracted from the NCBI database") %>%
+  kable_styling()
+```
+
+## Text Mining
+
+Now, we can shift our attention to text mining by first loading in the `pubmed.csv` data from the class GitHub repository. Then, we can tokenize each abstract and visualize the top 10 tokens in both tabular and graphical form below:
+
+```{r, echo = FALSE, message = FALSE, warning = FALSE}
+pubmed <- read_csv("~/Downloads/pubmed.csv")
+```
+
+```{r, echo = FALSE}
+tokens <- pubmed %>%
+  select(abstract) %>%
+  unnest_tokens(word, abstract) %>%
+  group_by(word) %>%
+  summarise(word_frequency = n()) %>%
+  arrange(across(word_frequency, desc)) %>%
+  head(10)
+
+tokens %>%
+  rename("Word" = word, "Frequency" = word_frequency) %>%
+  kable(caption = "The Frequencies of the Top 10 Most Common Words in the PubMed Data") %>%
+  kable_styling()
+```
+
+```{r, echo = FALSE}
+tokens %>%
+  ggplot(aes(reorder(word, -word_frequency), word_frequency)) +
+  geom_bar(stat = 'identity') +
+  xlab("Word") +
+  ylab("Frequency") +
+  ggtitle("The Frequencies of the Top 10 Most Common Words in the PubMed Data") +
+  coord_flip()
+```
+
+As we can see, the top 10 tokens aren't very interesting as they are all just regularly used English words with the exception of "covid" and "19", so our next step is to remove all of these stopwords. The following table shows the top 5 tokens after removing stopwords for each of the search terms:
+
+```{r, echo = FALSE}
+pubmed %>%
+  unnest_tokens(word, abstract) %>%
+  anti_join(stop_words, by = "word") %>%
+  group_by(term) %>%
+  count(word) %>%
+  top_n(5, n) %>%
+  arrange(term, desc(n)) %>%
+  rename("Search Term" = term, "Word" = word, "Frequency" = n) %>%
+  kable(caption = "The Frequencies of the Top 5 Most Common Words Corresponding to the 5 Search Terms in the PubMed Data") %>%
+  kable_styling()
+```
+
+Next, we can look at the most common pairs of words among the abstracts in the data. The following table and barplot visualize the top 10 bigrams:
+
+```{r, echo = FALSE}
+pubmed %>%
+  select(abstract) %>%
+  unnest_tokens(bigram, abstract, token = "ngrams", n = 2) %>%
+  group_by(bigram) %>%
+  summarise(bigram_frequency = n()) %>%
+  separate(bigram, 
+           c("word1", "word2"), 
+           extra = "drop", 
+           remove = FALSE, 
+           sep = " ", 
+           fill = "right") %>%
+  anti_join(stop_words, by = c("word1" = "word")) %>%
+  anti_join(stop_words, by = c("word2" = "word")) %>%
+  arrange(across(bigram_frequency, desc)) %>%
+  head(10) %>%
+  rename("Bigram" = bigram, "First Word" = word1, "Second Word" = word2, "Frequency" = bigram_frequency) %>%
+  kable(caption = "The Frequencies of the Top 10 Most Common Bigrams in the PubMed Data After Removing Stopwords") %>%
+  kable_styling()
+```
+
+```{r, echo = FALSE}
+pubmed %>%
+  select(abstract) %>%
+  unnest_tokens(bigram, abstract, token = "ngrams", n = 2) %>%
+  group_by(bigram) %>%
+  summarise(bigram_frequency = n()) %>%
+  separate(bigram, 
+           c("word1", "word2"), 
+           extra = "drop", 
+           remove = FALSE, 
+           sep = " ", 
+           fill = "right") %>%
+  anti_join(stop_words, by = c("word1" = "word")) %>%
+  anti_join(stop_words, by = c("word2" = "word")) %>%
+  arrange(across(bigram_frequency, desc)) %>%
+  head(10) %>%
+  ggplot(aes(reorder(bigram, -bigram_frequency), bigram_frequency)) +
+  geom_bar(stat = 'identity') +
+  xlab("Bigram") +
+  ylab("Frequency") +
+  ggtitle("The Frequencies of the Top 10 Most Common Bigrams in the Given 
+          PubMed Data After Removing Stopwords") +
+  coord_flip()
+```
+
+Finally, we can look at the words associated with the top 5 TF-IDF values for each of the 5 search terms in the table and plot below:
+
+```{r, echo = FALSE}
+pubmed %>%
+  unnest_tokens(word, abstract) %>%
+  anti_join(stop_words, by = "word") %>%
+  count(term, word) %>%
+  group_by(term) %>%
+  bind_tf_idf(word, term, n) %>%
+  top_n(5, n) %>%
+  arrange(term, desc(tf_idf)) %>%
+  select(term, word, tf_idf) %>%
+  rename("Search Term" = term, "Word" = word, "TF-IDF Value" = tf_idf) %>%
+  kable(caption = "The 5 Largest TF-IDF Values For Words Corresponding to the 5 Search Terms in the PubMed Data") %>%
+  kable_styling()
+  
+```
+
+We can see in the table above which words (after removing stopwords, of course) have the highest TF-IDF values for each of the 5 search terms in the PubMed dataset. By comparing these words with the words with the highest frequencies for each search term, we can see that the words with the highest frequencies for each search term match exactly with the words with the highest TF-IDF values for each search term.
+
+This may seem counterintuitive as TF-IDF values are generally understood to be larger for rare words and smaller for more common words, but upon closer inspection, this contrast can be explained by the fact that TF-IDF values can also be understood as a balancing measure with regards to whether a word is rare or common. As some words for some search terms can intuitively be seen as making up a massive proportion of all the words present for that search term (for example, take the word "covid" with the "covid" search term, it is natural for this word to make up the bulk of the words in abstracts under the "covid" search term), it is possible that these words are so overrepresented that their TF-IDF values get pushed upward, as the balancing measure is just skewed in the direction of having a larger frequency instead of a smaller frequency.

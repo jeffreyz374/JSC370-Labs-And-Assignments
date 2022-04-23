@@ -1,0 +1,361 @@
+---
+title: "Air Quality Issues in SoCal? An Analysis of Data From the Southern California Children's Health Study"
+author: "Xiaotang (Jeffrey) Zhou"
+date: "21/02/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(kableExtra)
+library(tidyverse)
+library(ggplot2)
+library(leaflet)
+library(mgcv)
+individual_data <- read.csv("~/Downloads/chs_individual.csv")
+regional_data <- read.csv("~/Downloads/chs_regional_geo.csv")
+merged_data <- merge(individual_data, regional_data)
+```
+
+## Data Merging and Wrangling
+First, to verify that the merge was done properly, we expect that there should be 1200 rows and 49 columns in the merged dataset, as 1200 is the number of rows in the dataset corresponding to the individuals surveyed for this research, while 49 is the total number of columns in the individual and community datasets, minus the mutual column of `townname` that the merge was based on.
+```{r}
+dim(merged_data)
+```
+As we can see above, there are indeed 1200 rows and 49 columns in the merged dataset, as desired.
+
+Next, we print a table containing the variables in the merged dataset that have at least 1 missing value along with the corresponding number of missing values for each of the variables. 
+
+```{r, echo=FALSE}
+x <- merged_data %>%
+  summarise_all((~ sum(is.na(.))))
+
+x <- as.data.frame(t(x)) %>%
+  rename("Number of Missing Values" = V1) %>%
+  filter(x > 0)
+
+x %>%
+  kable(caption = "Figure 1: A summary of all the variables in the dataframe that have missing values") %>%
+  kable_styling()
+```
+
+
+Using mean imputation for numerical variables and mode imputation for categorical variables, we will fill in these missing values based on whether a participant of the research is male or female and whether they are Hispanic or non-Hispanic. Then, to confirm that there are indeed no more missing values anywhere in the dataset, we can print another table with the counts of the missing values for each variable in the dataset:
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+# split the dataset into 4: one for female hispanics, one for female non-hispanics,
+# one for male hispanics, and one for male non-hispanics
+female_hispanic <- merged_data %>%
+  filter(male == 0 & hispanic == 1)
+female_nonhispanic <- merged_data %>%
+  filter(male == 0 & hispanic == 0)
+male_hispanic <- merged_data %>%
+  filter(male == 1 & hispanic == 1)
+male_nonhispanic <- merged_data %>%
+  filter(male == 1 & hispanic == 0)
+
+# mode function because R doesn't have one
+getmode <- function(v) {
+  uniqv <- unique(v)
+  uniqv <- uniqv[!is.na(uniqv)]
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+# female hispanic mean and mode imputation
+for(i in 1:ncol(female_hispanic)){
+  if(i <= 9 | i >= 21) {
+    female_hispanic[is.na(female_hispanic[,i]), i] <- mean(female_hispanic[,i], na.rm = TRUE)
+  } else {
+    female_hispanic[is.na(female_hispanic[,i]), i] <- getmode(female_hispanic[,i])
+  }
+}
+  
+# female non-hispanic mode imputation
+for(i in 1:ncol(female_nonhispanic)){
+  if(i <= 9 | i >= 21) {
+    female_nonhispanic[is.na(female_nonhispanic[,i]), i] <- mean(female_nonhispanic[,i], na.rm = TRUE)
+  } else {
+    female_nonhispanic[is.na(female_nonhispanic[,i]), i] <- getmode(female_nonhispanic[,i])
+  }
+}
+
+# male hispanic mode imputation
+for(i in 1:ncol(male_hispanic)){
+  if(i <= 9 | i >= 21) {
+    male_hispanic[is.na(male_hispanic[,i]), i] <- mean(male_hispanic[,i], na.rm = TRUE)
+  } else {
+    male_hispanic[is.na(male_hispanic[,i]), i] <- getmode(male_hispanic[,i])
+  }
+}
+
+# male non-hispanic mode imputation
+for(i in 1:ncol(male_nonhispanic)){
+  if(i <= 9 | i >= 21) {
+    male_nonhispanic[is.na(male_nonhispanic[,i]), i] <- mean(male_nonhispanic[,i], na.rm = TRUE)
+  } else {
+    male_nonhispanic[is.na(male_nonhispanic[,i]), i] <- getmode(male_nonhispanic[,i])
+  }
+}
+
+# put the 4 split datasets back together, now without missing values
+merged_data <- rbind(male_hispanic, male_nonhispanic, female_hispanic, female_nonhispanic)
+
+# final check for missing values
+y <- merged_data %>%
+  summarise_all((~ sum(is.na(.))))
+
+y <- as.data.frame(t(y)) %>%
+  rename("Number of Missing Values" = V1)
+
+y %>%
+  kable(caption = "Figure 2: An updated summary of all the variables in the dataframe that have missing values") %>%
+  kable_styling()
+```
+
+Next, we will create a categorical variable `obesity_level` based on the BMI measurement, which takes `underweight` if the BMI of an individual is below 14, `normal` if the BMI is between 14 (inclusive) and 22 (exclusive), `overweight` if the BMI is between 22 (inclusive) and 24 (inclusive), and `obese` if the BMI is above 24. To make sure the variable is rightly coded, consider the following summary table of statistics corresponding to the `bmi` variable and the table of counts for the `obesity_level` variable.
+```{r, echo=FALSE}
+merged_data <- merged_data %>%
+  mutate(obesity_level = case_when(merged_data$bmi < 14 ~ "underweight",
+                                   14 <= merged_data$bmi & merged_data$bmi < 22 ~ "normal",
+                                   22 <= merged_data$bmi & merged_data$bmi <= 24 ~ "overweight",
+                                   merged_data$bmi > 24 ~ "obese"))
+
+a <- summary(merged_data$bmi)
+t(a) %>%
+  kable(caption = "Figure 3: Summary statistics for the bmi variable in the dataset") %>%
+  kable_styling()
+```
+
+```{r, echo=FALSE}
+t(table(merged_data$obesity_level)) %>%
+  kable(caption = "Figure 4: Frequencies of each category of the obesity_level variable") %>%
+  kable_styling()
+  
+```
+
+Next, we will create another categorical variable called `smoke_gas_exposure`, which will take value `neither` if the corresponding individual is NOT exposed to second hand smoke and also does NOT have a gas stove at home, `gas` if the corresponding individual is NOT exposed to second hand smoke but DOES have a gas stove at home, `smoke` if the corresponding individual IS exposed to second hand smoke but does NOT have a gas stove at home, and `both` if the corresponding individual IS exposed to second hand smoke and also DOES have a gas stove at home. We can again see the table of counts for this new variable below:
+```{r, echo=FALSE}
+merged_data <- merged_data %>%
+  mutate(smoke_gas_exposure = case_when(!smoke & !gasstove ~ "neither",
+                                        !smoke & gasstove ~ "gas",
+                                        smoke & !gasstove ~ "smoke",
+                                        smoke & gasstove ~ "both"))
+
+t(table(merged_data$smoke_gas_exposure)) %>%
+  kable(caption = "Figure 5: Frequencies of each category of the smoke_gas_exposure variable") %>%
+  kable_styling()
+```
+
+Next, we will create tables summarizing the mean and standard deviation of the “Forced expiratory volume in 1 second (ml)” (`fev`) variable and the proportion of individuals with asthma, grouped by `townname`, `sex`, `obesity_level`, and `smoke_gas_exposure`
+```{r, echo=FALSE}
+fev_town <- merged_data %>%
+  group_by(townname) %>%
+  summarise("Average FEV" = mean(fev), 
+            "FEV Standard Deviation" = sd(fev),
+            "Proportion of Individuals With Asthma" = mean(asthma))
+
+fev_town %>%
+  rename("Town Name" = townname) %>%
+  kable(caption = "Figure 6: Mean and standard deviation of FEV and proportion of individuals with asthma across different towns") %>%
+  kable_styling()
+
+fev_sex <- merged_data %>%
+  group_by(male) %>%
+  summarise("Average FEV" = mean(fev), 
+            "FEV Standard Deviation" = sd(fev),
+            "Proportion of Individuals With Asthma" = mean(asthma))
+
+fev_sex %>%
+  rename("Sex (1 if male, 0 if female)" = male) %>%
+  kable(caption = "Figure 7: Mean and standard deviation of FEV and proportion of individuals with asthma across different sexes") %>%
+  kable_styling()
+
+fev_ol <- merged_data %>%
+  group_by(obesity_level) %>%
+  summarise("Average FEV" = mean(fev), 
+            "FEV Standard Deviation" = sd(fev),
+            "Proportion of Individuals With Asthma" = mean(asthma))
+
+fev_ol %>%
+  rename("Obesity Level" = obesity_level) %>%
+  kable(caption = "Figure 8: Mean and standard deviation of FEV and proportion of individuals with asthma across different obesity levels") %>%
+  kable_styling()
+
+fev_smokegas <- merged_data %>%
+  group_by(smoke_gas_exposure) %>%
+  summarise("Average FEV" = mean(fev), 
+            "FEV Standard Deviation" = sd(fev),
+            "Proportion of Individuals With Asthma" = mean(asthma))
+
+fev_smokegas %>%
+  rename("Exposure to Second Hand Smoke Gas Stoves" = smoke_gas_exposure) %>%
+  kable(caption = "Figure 9: Mean and standard deviation of FEV and proportion of individuals with asthma across different levels of exposure to second hand smoke and gas stoves") %>%
+  kable_styling()
+
+```
+
+## Exploratory Data Analysis and Visualizations
+By looking at the questions we want to answer, we can see that only the columns of `obesity_level`, `fev`, `smoke_gas_exposure`, `pm25_mass`, `townname`, `weight`, `agepft`, `male`, `race`, `lat`, and `lon` are still relevant. Thus, we can subset the dataset to include only those columns.
+```{r, echo=FALSE}
+merged_data <- subset(merged_data, select = c(townname, male, race, agepft, weight, bmi, fev, pm25_mass, lon, lat, obesity_level, smoke_gas_exposure))
+```
+
+Now, we can start exploring the main questions. First, we can draw a set of scatterplots with regression lines visualizing the association between `bmi` and `fev`, where each scatterplot visualizes the association in a different town:
+```{r, echo=FALSE, fig.cap="Figure 10"}
+merged_data %>%
+  ggplot(aes(x = bmi, y = fev)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  facet_wrap(~townname) +
+  ggtitle("The Association Between BMI and Forced Expiratory Volume 
+          In 1 Second (ml) (FEV) Across Different Towns")
+```
+
+As we can see in each of the above scatterplots with regression lines layered on, the association between BMI and FEV appears to have a positive, moderately linear relationship in each of the towns, with some towns having a few outliers that don't follow the positive trend. This suggests that across every town included in the data, as an individual's BMI increases, the amount of air they can exhale in 1 second (measured in mL) also increases.
+
+Next, we can draw a stacked histogram showing the distribution of `fev` grouping by `obesity_level`:
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Figure 11"}
+merged_data %>%
+  ggplot(aes(x = fev, fill = obesity_level)) +
+  geom_histogram() +
+  scale_fill_manual(values = c("Green","Yellow", "Red", "Black")) +
+  ggtitle("The Distribution of Forced Expiratory Volume 
+          In 1 Second (ml) (FEV) Across Different Levels of BMI")
+```
+
+In the above stacked histogram, we can first note that as a whole, the distribution looks roughly unimodal and symmetrical with a centre at around 2000 and a few outliers on both tails. In terms of grouping by obesity level, we can see that the distribution of FEV for those individuals who are classified as having a "normal" obesity level is roughly the same as the distribution as a whole (unimodal, symmetric with centre at 2000 FEV), which is unsurprising considering that these individuals make up $975 / 1200 = 0.8125 = 81.25$% of the observations in the dataset. For the other obesity levels, we can see that the distribution of FEV for individuals classified as "obese" is unimodal and slightly skewed to the left with a centre at around 2250, the distribution of FEV for individuals classified as "overweight" is roughly unimodal and somewhat symmetric with a centre at around 1600, and the distribution of FEV for individuals classified as "underweight" looks bimodal with peaks at 1800 and 2250. 
+
+All of this suggests a general trend that as BMI level progresses from "underweight" to "obese", the average FEV increases, which supports the analysis from the previous visualization of scatterplots that as one's BMI increases, the amount of air they exhale in 1 second also increases. However, it is also important to remember that a limitation to this analysis is that this sample somewhat over-represents individuals classified as having a "normal" obesity level, which makes comparing distributions across each obesity level more challenging. 
+
+We can also draw another stacked histogram showing the distribution of `fev` grouping by `smoke_gas_exposure`:
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Figure 12"}
+merged_data %>%
+  ggplot(aes(x = fev, fill = smoke_gas_exposure)) +
+  geom_histogram() +
+  scale_fill_manual(values = c("Black", "Yellow", "Green", "Red")) +
+  ggtitle("The Distribution of Forced Expiratory Volume 
+          In 1 Second (ml) (FEV) Across Different Levels of Exposure to 
+          Second Hand Smoke and a Gas Stove")
+```
+
+In this stacked histogram, we can first note that again as a whole, the distribution looks roughly unimodal and symmetrical with a centre at around 2000 and a few outliers on both tails. In terms of grouping by smoke and gas exposure, we can see that the distribution of FEV for those individuals who ONLY have a gas stove at home and those who BOTH have a gas stove at home AND are exposed to second hand smoke is roughly the same as the distribution of FEV over the whole dataset (unimodal, symmetric with centre at 2000 FEV), which is unsurprising considering that these individuals make up $791 / 1200 \approx 0.6592 = 65.92$% and $154 / 1200 \approx 0.1283 = 12.83$% of the observations in the dataset, respectively. For the other exposure levels, we can see that the distribution of FEV for individuals who NEITHER have a gas stove at home NOR are exposed to second hand smoke is seemingly uniform between 1800 and 2250 and slightly skewed to the right with a centre at around 2100, and the distribution of FEV for individuals classified who are ONLY exposed to second hand smoke is roughly unimodal (although mostly flat with a peak at 2100) and is somewhat symmetric with a centre at around 2100.
+
+All of this suggests a more surprising trend that when grouping by and comparing different levels of exposure to smoke and gas, the average FEV doesn't change all that much. However, we can again see that it is important to note that a limitation to this analysis is that this sample somewhat over-represents individuals classified as both having a gas stove at home and being exposed to both second hand smoke, which makes comparing distributions across each smoke and gas exposure level more challenging. 
+
+Next, we can draw a barplot describing the frequencies of `smoke_gas_exposure` grouping by `obesity_level`:
+```{r, echo=FALSE, fig.cap="Figure 13"}
+merged_data %>%
+  ggplot(aes(x = obesity_level, fill = smoke_gas_exposure)) +
+  geom_bar(position = "dodge") +
+  scale_fill_manual(values = c("Black", "Yellow", "Green", "Red")) +
+  labs(title = "Frequencies of Exposure to Second Hand Smoke Or a Gas Stove 
+       Across Different Levels of BMI", 
+       x = "BMI Category", y = "Count")
+```
+
+We can see in the above barcharts that for each of the 4 BMI categories, the frequency of individuals who only have a gas stove at home and are not exposed to second hand smoke is maximized, while the frequency of individuals who are exposed neither and those who are exposed to both are about the same for each category.
+
+Again, it is important to see that as individuals classified as having a "normal" obesity level and individuals who only have a gas stove at home are somewhat over-represented in this dataset, it is unsurprising to see that the greatest number of counts are on the barplot corresponding to the "normal" BMI Category and the tallest bar in that plot is the "gas" bar.
+
+Next, we can draw an errorbar plot describing the average and approximate error (standard deviation) of `fev` grouping by `obesity_level`:
+```{r, echo=FALSE, fig.cap="Figure 14"}
+merged_data %>%
+  ggplot(aes(x = obesity_level, y = fev)) +
+  stat_summary(fun.data = "mean_sdl", geom = "errorbar") +
+  stat_summary(fun.data = "mean_sdl") +
+  ggtitle("The Average and Approximate Error By Standard Deviation of 
+  Forced Expiratory Volume In 1 Second (ml) (FEV) Across Different BMI Levels")
+```
+
+In this errorbar plot comparing the standard deviations of the average FEV across the 4 obesity levels, we see that there is roughly similar variability for all 4 obesity levels but different average FEV values across the 4 levels. This suggests that although variability for FEV is roughly constant across the 4 obesity levels, as obesity level progresses from "underweight" to "obese", the average FEV increases. This further supports the earlier conclusion that as one's BMI increases, the amount of air they exhale in 1 second also increases.
+
+We can also draw a similar errorbar plot, only this time grouping by `smoke_gas_exposure`:
+```{r, echo=FALSE, fig.cap="Figure 15"}
+merged_data %>%
+  ggplot(aes(x = smoke_gas_exposure, y = fev)) +
+  stat_summary(fun.data = "mean_sdl", geom = "errorbar") +
+  stat_summary(fun.data = "mean_sdl") +
+  ggtitle("The Average and Approximate Error By Standard Deviation of 
+  Forced Expiratory Volume In 1 Second (ml) (FEV) Across Different Levels of
+  Exposure to Second Hand Smoke Or a Gas Stove")
+```
+
+In this errorbar plot comparing the standard deviations of the average FEV across the 4 levels of exposure to smoke and gas, we see that there is roughly similar variability and roughly similar average FEV values for all 4 exposure levels. This further supports the earlier surprising conclusion that when grouping by and comparing different levels of exposure to smoke and gas, the average FEV doesn't change all that much, while also adding that the variability doesn't change that much either.
+
+Next, we can draw a map depicting the `pm25_mass` concentrations in each of the 12 towns in the dataet:
+```{r, echo=FALSE, fig.cap="Figure 16"}
+pm_pal <- colorNumeric(c('blue', 'purple', 'red'), 
+                       domain = merged_data$pm25_mass,
+                       na.color = NA)
+
+merged_data %>%
+  leaflet() %>%
+  addProviderTiles('OpenStreetMap') %>%
+  addCircles(lat = ~lat,
+             lng = ~lon,
+             color = ~pm_pal(pm25_mass),
+             opacity = 1,
+             fillOpacity = 1,
+             label = ~paste(round(pm25_mass, 2), 'pm25_mass'),
+             radius = ~pm25_mass * 200)%>%#,
+             #radius = ~elev * 20) 
+  addLegend('bottomleft', 
+            pal = pm_pal, 
+            values = merged_data$pm25_mass, 
+            title = "Concentration of PM2.5 Mass", 
+            opacity = 1)
+```
+
+We can see from the above map that of the 12 towns in SoCal included in the dataset, those closest to the city of Los Angeles appear to have higher average concentrations of PM2.5. This is not very surprising considering that a major source of this chemical is fuel combustion from motor vehicles, so towns closer to the highly populated LA Downtown core will naturally have greater concentrations of PM2.5 than towns located away from it.
+
+Finally, we can draw a scatterplot with a regression line to visualize the association between `pm25_mass` and `fev`: 
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.cap = "Figure 17"}
+merged_data %>%
+  ggplot(aes(x = pm25_mass, y = fev)) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+```
+
+```{r}
+cor(merged_data$pm25_mass, merged_data$fev)
+```
+
+
+As we can see in the above plot, there is little to no association between the concentration of PM2.5 and the amount of air one can exhale in 1 second, and the flat line of best fit and the calculated correlation coefficient of -0.07341317 confirms this.
+
+## Advanced Linear Regression
+
+First, we will fit a simple linear model for the association between `fev` and `weight` with `agepft`, `male`, and `race` as additional predictors:
+```{r, echo=FALSE}
+simp_lin_mod <- lm(fev ~ weight + agepft + male + as.factor(race), data = merged_data)
+summary(simp_lin_mod)
+```
+
+```{r, echo=FALSE}
+plot(simp_lin_mod)
+```
+
+From the above summary table and plots, we can see that for the simple linear model, increases by 1 unit in each variable are responded to by an increase in the amount of air exhaled in 1 second WITH THE EXCEPTION of when the individual's race is classified as "Black", as the coefficient for that variable is negative while every other coefficient is positive. We can also see that given the plots, the assumptions for a simple linear model of a somewhat linear association and i.i.d. errors $\sim N(0, \sigma^2)$ are more or less satisfied. However, the adjusted $R^2$ for this model is not that great, as the value of $R^2_{adj} = 0.355$ suggests that only about 35.5% of the variation is explained by the model.
+
+Next, we can fit another multiple linear regression model where weight has been given a cubic regression spline:
+```{r, echo=FALSE}
+gam_mod <- gam(fev ~ s(weight, bs = "cr") + agepft + male + as.factor(race), data = merged_data)
+summary(gam_mod)
+```
+
+```{r, echo=FALSE}
+plot(gam_mod)
+```
+
+From the above summary table and plot of the GAM model, we can see that the general trend of increases by 1 unit in each variable are responded to by an increase in the amount of air exhaled in 1 second WITH THE EXCEPTION of when the individual's race is classified as "Black", as the coefficient for that variable is negative while every other coefficient is positive. However, also like its simple linear regression counterpart, the adjusted $R^2$ for this model is not that great, as the value of $R^2_{adj} = 0.382$ is very similar to that of the simple linear model and suggests that only about 38.2% of the variation is explained.
+
+We can see that most of the statistics pertaining to both of these models are about the same (i.e. the estimated coefficients, the $R^2_{adj}$, etc.). Given this, consider the below histogram describing the distribution of weight across the whole dataset:
+```{r, echo = FALSE, fig.cap="Figure 18", message=FALSE, warning=FALSE}
+merged_data %>%
+  ggplot(aes(x = weight)) +
+  geom_histogram() +
+  ggtitle("The Distribution of Weight Across the Entire Dataset")
+```
+
+As we can see in the above histogram, the distribution of `weight` does not appear to follow a nice, symmetrical pattern and is (expectedly) skewed to the right. Seeing as both models are similar save for the fact that weight is given a cubic regression spline, it would be a better choice to choose the GAM model over the simple linear one, as the cubic regression spline given to `weight` will allow it to vary more widely, which will help the GAM model account for more of the variation in the distribution of `weight` than the simple linear model will be able to.
