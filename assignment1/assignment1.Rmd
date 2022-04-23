@@ -21,8 +21,9 @@ library(ggpubr)
 
 First, we will load the Fort Ross climate data from both 1939 and 2021 using the `read.csv` function as seen below:
 ```{r}
-data_1939 <- read.csv("~/Downloads/climate_daily_NU_2402050_1939.csv")
-data_2021 <- read.csv("~/Downloads/climate_daily_NU_2402051_2021.csv")
+data_1939 <- read.csv("https://raw.githubusercontent.com/jeffreyz374/JSC370-Labs-And-Assignments/main/data/climate_daily_NU_2402050_1939.csv")
+
+data_2021 <- read.csv("https://raw.githubusercontent.com/jeffreyz374/JSC370-Labs-And-Assignments/main/data/climate_daily_NU_2402051_2021.csv")
 ```
 
 

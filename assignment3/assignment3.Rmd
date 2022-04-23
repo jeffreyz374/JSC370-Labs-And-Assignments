@@ -188,7 +188,7 @@ database %>%
 Now, we can shift our attention to text mining by first loading in the `pubmed.csv` data from the class GitHub repository. Then, we can tokenize each abstract and visualize the top 10 tokens in both tabular and graphical form below:
 
 ```{r, echo = FALSE, message = FALSE, warning = FALSE}
-pubmed <- read_csv("~/Downloads/pubmed.csv")
+pubmed <- read_csv("https://raw.githubusercontent.com/jeffreyz374/JSC370-Labs-And-Assignments/main/data/pubmed.csv")
 ```
 
 ```{r, echo = FALSE}

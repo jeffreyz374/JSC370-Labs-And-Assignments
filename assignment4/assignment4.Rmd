@@ -122,8 +122,7 @@ We can see above that there is a large difference between the `system.time` outp
 ## Part 2: ML
 
 ```{r, echo = FALSE}
-hitters <- getURL("https://raw.githubusercontent.com/JSC370/jsc370-2022/main/data/hitters/hitters.csv")
-hitters <- read.csv(text = hitters)
+hitters <- read.csv("https://raw.githubusercontent.com/jeffreyz374/JSC370-Labs-And-Assignments/main/data/hitters.csv")
 
 set.seed(1005858859)
 train_idx <- sample(1:nrow(hitters), floor(nrow(hitters) * 0.7))
