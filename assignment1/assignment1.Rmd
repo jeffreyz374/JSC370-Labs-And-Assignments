@@ -1,0 +1,268 @@
+---
+title: Significant Warming in the Arctic? An Analysis and Comparison of Temperature
+  Data From 1939 and 2021 Sourced From the Fort Hood, Nunavut, Weather Station
+author: "Xiaotang (Jeffrey) Zhou"
+date: "28/01/2022"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(leaflet)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+```
+
+## Data Loading, Cleaning, and Joining
+
+First, we will load the Fort Ross climate data from both 1939 and 2021 using the `read.csv` function as seen below:
+```{r}
+data_1939 <- read.csv("~/Downloads/climate_daily_NU_2402050_1939.csv")
+data_2021 <- read.csv("~/Downloads/climate_daily_NU_2402051_2021.csv")
+```
+
+
+Next, to clean the data we first call `dim` on both datasets to make sure the dimensions make sense:
+```{r}
+dim(data_1939)
+dim(data_2021)
+```
+
+
+As seen above, both datasets have 31 variables and more importantly, each dataset has 365 observations, which makes sense because each dataset by definition should have an observation for each day of the year, and since both 1939 and 2021 were not leap years this number of 365 observations per dataset is correct.
+
+Next, we will use the `summarise_all` function in order to find which columns in either dataset are all NA's or otherwise blank, which we will then delete in **both** datasets. For example, if column A in `data_1939` has all NA or otherwise missing values but the corresponding column in `data_2021` is populated with some non-NA or missing values, we still delete the column in both datasets. The reason for this is because our main question is whether the daily temperature has significantly changed from 1939 to 2021, and if it is not possible to compare a variable across both datasets, the variable is useless for answering our question. 
+
+Knowing this, we first assess the data from 1939 by counting the NA's in every column:
+```{r}
+data_1939 %>% 
+  summarise_all((~ sum(is.na(.))))
+```
+
+
+We can see that the columns corresponding to the variables of `Spd.of.Max.Gust.Flag`, `Spd.of.Max.Gust..km.h.`, `Dir.of.Max.Gust.Flag`, `Dir.of.Max.Gust..10s.deg.`, `Snow.on.Grnd.Flag`, `Snow.on.Grnd..cm.`, `Total.Rain.Flag`, `Max.Temp.Flag`, and `Data.Quality` contain 365 NA values, which means we can delete them from both `data_1939` and `data_2021`:
+```{r}
+data_1939 <- subset(data_1939, select = c(-31, -30, -29, -28, -27, -26, -21, -11, -9))
+data_2021 <- subset(data_2021, select = c(-31, -30, -29, -28, -27, -26, -21, -11, -9))
+```
+
+
+Now, we can look at `data_2021` to see if there are still any columns that contain all NA or missing values:
+```{r}
+data_2021 %>% 
+  summarise_all((~ sum(is.na(.))))
+```
+
+
+As it turns out, we can see that the columns corresponding to the variables of
+`Total.Rain..mm.`, `Total.Snow..cm.`, and `Total.Snow.Flag` contain 365 NA values, which means we can delete them from both `data_1939` and `data_2021`:
+```{r}
+data_1939 <- subset(data_1939, select = c(-18, -19, -20))
+data_2021 <- subset(data_2021, select = c(-18, -19, -20))
+```
+
+
+Now, by eyeballing the 2021 data, we can see some suspicious things going on in the columns containing `.Flag` as many of the entries in those columns are just whitespace. Using `lapply` to call `table` on each of them, we can investigate the issue:
+```{r}
+flags <- subset(data_2021, select = c(11, 13, 15, 17, 19))
+flags %>% 
+  lapply(table)
+```
+
+
+As we can see above, all 5 of these columns contain either only whitespace or the character "M". If we look at the table of symbols from the source of the data, we see that "M" means the value is "missing". Thus, we come to the conclusion that each of the columns corresponding to these 5 "flag" variables contain either a blank or a missing value, which means we must remove them too:
+```{r}
+data_1939 <- subset(data_1939, select = c(-11, -13, -15, -17, -19))
+data_2021 <- subset(data_2021, select = c(-11, -13, -15, -17, -19))
+```
+
+
+Looking at the remaining data, we can see that the `Cool.Deg.Days...C.` variable in both datasets seems to have a large amount of zeroes. By looking at the definition of this variable from the source from the data, we have that "[c]ooling degree-days for a given day are the number of degrees Celsius that the mean temperature is above 18C" and "[i]f the temperature is equal to or less than 18 °C, then the number will be zero". Knowing this, we can examine the summary statistics of the daily mean temperature variable `Mean.Temp...C.` to get a snapshot of what the distribution of `Cool.Deg.Days...C.` looks like:
+```{r}
+summary(data_1939$Mean.Temp...C.)
+summary(data_2021$Mean.Temp...C.)
+```
+
+
+As seen above, the maximum value for the mean daily temperature in the are 7.8C and 8.1C for 1939 and 2021, respectively. Since this means the average daily temperature for all 365 days for both years is always less than 18C, the variable `Cool.Deg.Days...C.` will always either be 0 or NA, which doesn't give us any new information. Thus, we can justify removing this column too:
+```{r}
+data_1939 <- subset(data_1939, select = c(-13))
+data_2021 <- subset(data_2021, select = c(-13))
+```
+
+
+Finally, we see that the variables of `Station.Name` and `Climate.ID` in both datasets are just identifiers for the weather station and won't play a role in answering the central question. Thus, we can get rid of them too:
+```{r}
+data_1939 <- subset(data_1939, select = c(-3, -4))
+data_2021 <- subset(data_2021, select = c(-3, -4))
+```
+
+
+Now that we've cleaned the data to our liking, we can rename the variables to facilitate joining the 2 datasets without causing any confusion as to what variable represents what year:
+```{r}
+data_1939 <- data_1939 %>%
+  rename(
+    latitude_1939 = Latitude..y.,
+    longitude_1939 = Longitude..x.,
+    max_temp_1939 = Max.Temp...C.,
+    min_temp_1939 = Min.Temp...C.,
+    mean_temp_1939 = Mean.Temp...C.,
+    mean_deg_below_18_1939 = Heat.Deg.Days...C.,
+    total_precip_1939 = Total.Precip..mm.
+  )
+
+data_2021 <- data_2021 %>%
+  rename(
+    latitude_2021 = Latitude..y.,
+    longitude_2021 = Longitude..x.,
+    max_temp_2021 = Max.Temp...C.,
+    min_temp_2021 = Min.Temp...C.,
+    mean_temp_2021 = Mean.Temp...C.,
+    mean_deg_below_18_2021 = Heat.Deg.Days...C.,
+    total_precip_2021 = Total.Precip..mm.
+  )
+
+```
+
+Due to this renaming, the need to have the `Year` column in either dataset no longer exists, so we can get rid of it too:
+```{r}
+data_1939 <- subset(data_1939, select = c(-4))
+data_2021 <- subset(data_2021, select = c(-4))
+```
+
+We can then replace the `Date.Time` variables in both datasets with actual datetime objects instead of strings, which will make it easier to create time-series plots later:
+```{r}
+data_1939$dates_1939 <- as.Date(data_1939$Date.Time)
+data_2021$dates_2021 <- as.Date(data_2021$Date.Time)
+data_1939 <- subset(data_1939, select = c(-3))
+data_2021 <- subset(data_2021, select = c(-3))
+```
+
+
+Since both datasets record `Month` and `Day` with no missing values, we can join them based on these parameters using the `merge` function:
+```{r}
+merged_data <- merge(data_1939, data_2021, by=c("Month", "Day"))
+head(merged_data)
+```
+
+
+As we can see above, the ordering of the months and days has been scrambled, but we can fix that by using the `arrange` function as follows:
+```{r}
+merged_data <- merged_data %>%
+  arrange(Month, Day)
+
+head(merged_data)
+```
+
+
+To simplify the process of creating plots to reflect change over time, we can add an incrementing variable `day_number` that ranges from 1 to 365 that corresponds to the nth day of the year:
+```{r}
+day_number <- seq(1, 365)
+merged_data$day_number <- day_number
+```
+
+
+## Exploring the Main Question
+
+We can start our exploration of the main question by calculating summary statistics for the data from 1939 and 2021, respectively:
+```{r}
+subset(merged_data, select = c(5, 6, 7, 8, 9)) %>% 
+  lapply(summary)
+
+subset(merged_data, select = c(13, 14, 15, 16, 17)) %>% 
+  lapply(summary)
+```
+
+
+From the above, we can start by making the unusual observation that the number of missing values in the data for 2021 is greater than the data for 1939. We can also see that both the variables of `total_precip_1939` and `total_precip_2021` have a lot of missing values, which makes them less suitable for inference compared to the other variables.
+
+Since the mean daily temperatures for both years, which are derived by averaging the max and min daily temperatures, are likely the best indicator for daily change in temperature and have in their corresponding years similar means and medians (i.e. `mean_temp_1939` has a median of -15.90 and a mean of -15.15 and `mean_temp_2021` has a median of -11.25 and a mean of -11.44), we can reasonably assume there isn't any crazy skew and there aren't too many extreme outliers that could affect the analysis. Thus, from this point forward we will focus more closely on the `mean_temp_1939` and `mean_temp_2021` variables.
+
+Next, we can set up some significance tests: the first one will have a null hypothesis that states the difference between the population mean of the `mean_temp_2021` variable and that of the `mean_temp_1939` variable is 0 (i.e. there is no difference) and an alternative hypothesis which states difference between the population mean of the `mean_temp_2021` variable and that of the `mean_temp_1939` variable is NOT 0 (i.e. there IS a difference):
+```{r}
+t.test(merged_data$mean_temp_2021, merged_data$mean_temp_1939, alternative="two.sided", var.equal = TRUE)
+```
+
+
+With a p-value of 0.000391 < 0.05, we have significant evidence that the 2 means are different. With that in mind, we can pursue a stronger conclusion: we set up a second significance test with a null hypothesis that states the difference between the population mean of the `mean_temp_2021` variable and that of the `mean_temp_1939` variable is 0 (i.e. there is no difference) and an alternative hypothesis which states difference between the population mean of the `mean_temp_2021` variable and that of the `mean_temp_1939` variable is GREATER THAN 0 (i.e. the population mean of `mean_temp_2021` is larger than that of `mean_temp_1939`):
+```{r}
+t.test(merged_data$mean_temp_2021, merged_data$mean_temp_1939, alternative="greater", var.equal = TRUE)
+```
+
+
+As we have a p-value of 0.0001955 < 0.05, we can now say that we have significant evidence that the mean of `mean_temp_2021` is larger than that of `mean_temp_1939`. Combined with the result of the first test, this means that there is a statistically significant difference between the average mean daily temperature for the year 2021 and the average mean daily temperature for the year 1939 in Fort Hood, Nunavut, where the average mean daily temperature for the year 2021 is significantly larger.
+
+In order to go a step further in our analysis, we can set up a new column in the dataframe that describes `mean_temp_2021 - mean_temp_1939`: the difference between the mean daily temperature in 2021 with the mean daily temperature in 1939:
+```{r}
+merged_data$mean_temp_diffs <- merged_data$mean_temp_2021 - merged_data$mean_temp_1939
+summary(merged_data$mean_temp_diffs)
+```
+
+
+Using this new column, we can set up another significance test: this one will have a null hypothesis that states the true mean of the `mean_temp_diffs` variable is 0 (i.e. there is on average no difference between the daily mean temperature in 2021 and the daily mean temperature in 1939) and an alternative hypothesis which states the true mean of the `mean_temp_diffs` variable is NOT 0 (i.e. on average there IS a difference):
+```{r}
+t.test(merged_data$mean_temp_diffs, alternative="two.sided", var.equal = TRUE)
+```
+
+
+As seen above, the p-value for this hypothesis test is so low that it's undisplayable, which means we have very significant evidence that on average, there is a difference between the daily mean temperature in 2021 and the daily mean temperature in 1939. 
+
+Now, given recent reports from scientific bodies such as the IPCC regarding alarming rates of warming at an average of 1.5C, we can set up another significance test to see if the warming between 1939 and 2021 in Fort Hood is significantly greater than that threshold of 1.5C. Here, we have a null hypothesis that states the true mean of the `mean_temp_diffs` variable is 1.5 (i.e. on average the difference between the daily mean temperature in 2021 and the daily mean temperature in 1939 is 1.5C) and an alternative hypothesis which states the true mean of the `mean_temp_diffs` variable is GREATER THAN 1.5C (i.e. on average the difference is larger than 1.5C):
+```{r}
+t.test(merged_data$mean_temp_diffs, alternative="greater", mu = 1.5, var.equal = TRUE)
+```
+
+
+As we can see, the p-value of 7.033e-08 < 0.05 demonstrates that there is very significant evidence that the difference between the daily mean temperature in 2021 and the daily mean temperature in 1939 in Fort Hood is larger than 1.5C.
+
+## Exploratory Plots and Maps
+
+First, we can use `leaflet` to display a map of where the station was located in both 1939 and 2021, where the black dot represents the location of the station in 1939 and the blue dot represents the location of the station in 2021:
+```{r}
+leaflet() %>%
+  addProviderTiles('OpenStreetMap') %>%
+  addCircles(lat = ~latitude_1939, lng = ~longitude_1939, opacity = 1, fillOpacity = 1, radius = 100, data = merged_data, group = "1939 Station Location", color = "black") %>%
+  addCircles(lat = ~latitude_2021, lng = ~longitude_2021, opacity = 1, fillOpacity = 1, radius = 100, data = merged_data, group = "2021 Station Location", color = "blue")
+```
+
+
+Next, we can create boxplot visualizations for the variables we analyzed in the previous section to get a snapshot of the centre, spread, and outliers of the distributions of each variable:
+```{r}
+merged_data %>%
+  select(mean_temp_1939, mean_temp_2021, mean_temp_diffs) %>% 
+  boxplot()
+```
+
+
+To see the shape of each distribution, we can also draw histograms for each of them: 
+```{r}
+hist(merged_data$mean_temp_1939)
+hist(merged_data$mean_temp_2021)
+hist(merged_data$mean_temp_diffs)
+```
+
+
+We can also get a snapshot of what the progression of the mean daily temperatures for both years looked like over the course of their respective years using a time series:
+```{r}
+plot(merged_data$dates_1939, merged_data$mean_temp_1939, type = 'l')
+plot(merged_data$dates_2021, merged_data$mean_temp_2021, type = 'l')
+```
+
+
+We can also draw a pseudo time series for the difference in daily mean temperatures between the value in 2021 and the value in 1939, only here we will use the `day_number` variable instead of the actual datetime type variables. We have also added a horizontal at 0 to visualize when the difference was positive and when it was negative:
+```{r}
+plot(merged_data$day_number, merged_data$mean_temp_diffs, type = 'l')
+abline(h = 0, col="red")
+```
+
+## Conclusion
+
+All in all, in this analysis and comparison of historical and modern temperature data from the Fort Hood weather station, we found that the on average, the mean daily temperature in Fort Hood, Nunavut, not only increased significantly from 1939 to 2021, but it also on average increased more than 1.5C. To reach this conclusion, we first cleaned each of the two datasets made available to us by removing any columns that held only missing values, then we joined the datasets together to allow easier calculation of summary statistics and the creation of new variables. It was through calculating summary statistics that we decided to focus on the mean daily temperature for this analysis.
+
+Then, through conducting significance tests, we reached the conclusion that not only is the daily mean temperature in Fort Hood recorded in 1939 different from that recorded in 2021, but also that the daily mean temperature in Fort Hood recorded in 1939 is significantly larger than that recorded in 2021. Going a step further, we conducted two more significance tests focused on the difference between the daily mean temperature in 2021 and the daily mean temperature in 1939 for the corresponding day. In these significance tests, we made the discovery that the average difference of the daily mean temperature of Fort Hood in 2021 and that of 1939 is significantly more than 1.5C, which supports the mostly accepted conclusion that Arctic is warming at an alarming rate.
+
+Finally, we also constructed some exploratory maps and plots of the merged data, which showed us where the station was located in both 1939 and 2021, what the shape, centre, outliers, and spread of each of the variables of interest looked like, and how the variables changed over each year.
