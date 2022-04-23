@@ -39,22 +39,8 @@ First download and then read in with data.table:fread()
 
 This is the same met_data as we used in lab 03, so you can choose to move that file to your current project directory instead of re-downloading.
 
-```{r checking-file, include=FALSE}
-fn <- "https://raw.githubusercontent.com/JSC370/jsc370-2022/main/labs/lab03/met_all.gz"
-if (!file.exists("met_all.gz"))
-  download.file(fn, destfile = "met_all.gz")
-met <- data.table::fread("met_all.gz")
-```
-
-```{r, echo=FALSE, message=FALSE, eval=FALSE}
-download.file(
-  "https://raw.githubusercontent.com/JSC370/jsc370-2022/main/labs/lab03/met_all.gz",
-  destfile = "met_all.gz",
-  method   = "curl",
-  timeout  = 60
-  )
-
-met <- data.table::fread("met_all.gz")
+```{r, echo=FALSE, message=FALSE}
+met <- data.table::fread("https://raw.githubusercontent.com/jeffreyz374/JSC370-Labs-And-Assignments/main/data/met_all.gz")
 ```
 
 ### 2. Prepare the data

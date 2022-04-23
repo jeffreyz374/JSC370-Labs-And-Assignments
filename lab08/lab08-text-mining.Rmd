@@ -45,7 +45,7 @@ library(wordcloud)
 library(kableExtra)
 
 
-mt_samples <- read_csv("https://raw.githubusercontent.com/JSC370/jsc370-2022/main/data/medical_transcriptions/mtsamples.csv")
+mt_samples <- read_csv("https://raw.githubusercontent.com/jeffreyz374/JSC370-Labs-And-Assignments/main/data/mtsamples.csv")
 mt_samples <- mt_samples %>%
   select(description, medical_specialty, transcription)
 
