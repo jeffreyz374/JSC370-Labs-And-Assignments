@@ -45,7 +45,7 @@ library(kableExtra)
 library(ggplot2)
 library(dplyr)
 
-heart<-read.csv("https://raw.githubusercontent.com/JSC370/jsc370-2022/main/data/heart/heart.csv")
+heart<-read.csv("https://raw.githubusercontent.com/jeffreyz374/JSC370-Labs-And-Assignments/main/data/heart.csv")
 
 head(heart)
 ```
