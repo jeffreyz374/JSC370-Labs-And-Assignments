@@ -50,10 +50,10 @@ opts_chunk$set(
 
 ```{r}
 
-cv_states_readin <- as.data.frame(data.table::fread("https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-states.csv") )
+cv_states_readin <- as.data.frame(data.table::fread("https://raw.githubusercontent.com/jeffreyz374/JSC370-Labs-And-Assignments/main/data/covid-states.csv") )
 
 
-state_pops <- as.data.frame(data.table::fread("https://raw.githubusercontent.com/COVID19Tracking/associated-data/master/us_census_data/us_census_2018_population_estimates_states.csv"))
+state_pops <- as.data.frame(data.table::fread("https://raw.githubusercontent.com/jeffreyz374/JSC370-Labs-And-Assignments/main/data/us-census-data.csv"))
 
 state_pops$abb <- state_pops$state
 state_pops$state <- state_pops$state_name
