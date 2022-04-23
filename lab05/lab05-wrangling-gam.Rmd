@@ -98,7 +98,7 @@ knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 ```{r stations-data, message=FALSE}
 library(data.table)
 # Download the data
-stations <- fread("ftp://ftp.ncdc.noaa.gov/pub/data/noaa/isd-history.csv")
+stations <- fread("https://raw.githubusercontent.com/jeffreyz374/JSC370-Labs-And-Assignments/main/lab05/isd-history.csv")
 stations[, USAF := as.integer(USAF)]
 
 # Dealing with NAs and 999999
